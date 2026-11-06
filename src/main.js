@@ -745,12 +745,15 @@ function bindUI() {
   scrollEl().addEventListener("scroll", () => { updatePageInfo(); saveProgressSoon(); });
   window.addEventListener("blur", () => { if (book) saveProgressSoon(); });
 
-  // 单行模式:滚轮逐行,窗口宽度变化时重排当前行
-  scrollEl().addEventListener("wheel", (e) => {
-    if (!settings.lineMode || !book) return;
+  // 鼠标悬停在阅读窗口时滚轮翻页;面板和表单保留原生滚动。
+  $("app").addEventListener("wheel", (e) => {
+    if (!book || $("reader").classList.contains("hidden") || ghost) return;
+    if (e.target.closest(".panel, input, textarea, select, [contenteditable]")) return;
+    if (e.ctrlKey || e.metaKey || e.deltaY === 0 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
     e.preventDefault();
-    e.deltaY > 0 ? lineNext() : linePrev();
+    pageTurn(e.deltaY > 0 ? 1 : -1);
   }, { passive: false });
+  // 单行模式:窗口宽度变化时重排当前行
   window.addEventListener("resize", debounce(() => {
     if (settings.lineMode && book) renderLine(segStart);
   }, 150));
