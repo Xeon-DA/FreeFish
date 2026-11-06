@@ -81,6 +81,9 @@ fn set_shortcuts(
     map.clear();
 
     let mut results = HashMap::new();
+    let visible = app
+        .get_webview_window("main")
+        .is_some_and(|win| win.is_visible().unwrap_or(false));
     for (action, acc) in bindings {
         let acc = acc.trim().to_string();
         if acc.is_empty() {
@@ -88,7 +91,11 @@ fn set_shortcuts(
             continue;
         }
         match acc.parse::<Shortcut>() {
-            Ok(sc) => match gs.register(sc) {
+            Ok(sc) => match if action == "boss" || visible {
+                gs.register(sc)
+            } else {
+                Ok(())
+            } {
                 Ok(()) => {
                     map.insert(sc, action.clone());
                     results.insert(action, "ok".to_string());
@@ -105,13 +112,47 @@ fn set_shortcuts(
     results
 }
 
+/// 隐藏时释放非老板键,唤回后恢复；不要持有映射锁调用系统快捷键 API。
+fn sync_shortcuts(app: &AppHandle, visible: bool) {
+    let shortcuts = app.state::<ShortcutMap>().0.lock().unwrap().clone();
+    let gs = app.global_shortcut();
+    for (shortcut, action) in shortcuts {
+        if action == "boss" {
+            continue;
+        }
+        let result = if visible && !gs.is_registered(shortcut) {
+            gs.register(shortcut)
+        } else if !visible && gs.is_registered(shortcut) {
+            gs.unregister(shortcut)
+        } else {
+            continue;
+        };
+        if let Err(error) = result {
+            let message = format!("快捷键 {action} 更新失败: {error}");
+            eprintln!("{message}");
+            let _ = app.emit("shortcut-error", message);
+        }
+    }
+}
+
+#[tauri::command]
+fn hide_reader(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        win.hide().map_err(|error| error.to_string())?;
+        sync_shortcuts(&app, false);
+    }
+    Ok(())
+}
+
 /// 老板键: 直接在 Rust 侧切换窗口显示/隐藏,窗口隐藏时 JS 不可达也依然有效
 fn toggle_boss(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         if win.is_visible().unwrap_or(false) {
-            let _ = win.hide();
-        } else {
-            let _ = win.show();
+            if let Err(error) = hide_reader(app.clone()) {
+                eprintln!("隐藏窗口失败: {error}");
+            }
+        } else if win.show().is_ok() {
+            sync_shortcuts(app, true);
             let _ = win.set_focus();
         }
     }
@@ -143,7 +184,10 @@ pub fn run() {
                     if let Some(action) = action {
                         if action == "boss" {
                             toggle_boss(app);
-                        } else {
+                        } else if app
+                            .get_webview_window("main")
+                            .is_some_and(|win| win.is_visible().unwrap_or(false))
+                        {
                             // 其余动作(翻页/穿透/置顶)交给前端处理
                             let _ = app.emit("hotkey", action);
                         }
@@ -157,7 +201,8 @@ pub fn run() {
             pick_txt,
             save_data,
             load_data,
-            set_shortcuts
+            set_shortcuts,
+            hide_reader
         ])
         .run(tauri::generate_context!())
         .expect("error while running FreeFish");

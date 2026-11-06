@@ -553,7 +553,7 @@ function resetIdleTimer() {
   clearTimeout(idleTimer);
   if (!settings.autoHide) return;
   idleTimer = setTimeout(async () => {
-    try { await appWindow.hide(); } catch (e) { console.error(e); }
+    try { await invoke("hide_reader"); } catch (e) { console.error(e); }
   }, Math.max(3, +settings.autoHideSecs || 10) * 1000);
 }
 
@@ -723,7 +723,7 @@ function bindUI() {
     if (e.key === "Escape") {
       const open = document.querySelector(".panel:not(.hidden)");
       if (open) closePanels();
-      else appWindow.hide(); // 本地老板键,全局老板键唤回
+      else invoke("hide_reader").catch(console.error); // 本地老板键,全局老板键唤回
       e.preventDefault();
       return;
     }
@@ -790,6 +790,7 @@ async function init() {
   try { await appWindow.setAlwaysOnTop(!!settings.alwaysOnTop); } catch (e) { console.error(e); }
 
   await listen("hotkey", (e) => handleHotkey(e.payload));
+  await listen("shortcut-error", (e) => toast(e.payload, 5000));
   await applyShortcuts(false);
   resetIdleTimer();
 
