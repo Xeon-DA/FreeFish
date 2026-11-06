@@ -3,6 +3,11 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+
+const WINDOW_STATE_FLAGS: StateFlags = StateFlags::POSITION
+    .union(StateFlags::SIZE)
+    .union(StateFlags::MAXIMIZED);
 
 /// 已注册快捷键 -> 动作名 的映射
 #[derive(Default)]
@@ -164,10 +169,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::POSITION
-                        | tauri_plugin_window_state::StateFlags::SIZE,
-                )
+                .with_state_flags(WINDOW_STATE_FLAGS)
+                .skip_initial_state("main")
                 .build(),
         )
         .plugin(
@@ -196,6 +199,26 @@ pub fn run() {
                 .build(),
         )
         .manage(ShortcutMap::default())
+        .setup(|app| {
+            if let Some(win) = app.get_webview_window("main") {
+                // 先恢复位置和尺寸再显示,避免启动时闪现默认窗口。
+                if let Err(error) = win.restore_state(WINDOW_STATE_FLAGS) {
+                    eprintln!("恢复窗口状态失败: {error}");
+                }
+                win.show()?;
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                // 在窗口销毁前落盘;不保存隐藏状态,下次启动仍可直接看到窗口。
+                if let Err(error) = window.app_handle().save_window_state(WINDOW_STATE_FLAGS) {
+                    eprintln!("保存窗口状态失败: {error}");
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             read_book,
             pick_txt,
